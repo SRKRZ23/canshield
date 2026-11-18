@@ -1,0 +1,19 @@
+{
+ "layers": 4,
+ "width": 128,
+ "groups": 16,
+ "seed": 0,
+ "epochs": 2000,
+ "target_fpr": 0.001,
+ "pos_weight": 1.0,
+ "lr": 0.2,
+ "threshold": 10,
+ "gates": 512,
+ "train_recall": 0.822100627252102,
+ "train_fpr": 0.0006179523447090732,
+ "alarm_k": 4,
+ "alarm_n": 8,
+ "alarm_bus_k": 2,
+ "alarm_bus_n": 64,
+ "selected_on": "train split only (balanced recall, missed captures, false alarms/hour)"
+}

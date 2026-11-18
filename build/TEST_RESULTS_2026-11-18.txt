@@ -1,0 +1,33 @@
+model: 512 gates, threshold 10/16; alarm rule K=4 of last N=8 frames per id; split=test
+
+capture                                        type       inj  recall      FPR  event-level
+ambient_dyno_drive_basic_short                 ambient 1063624           0.004%  1 alarm events / 7.4 min
+ambient_dyno_drive_radio_infotainment          ambient 932852           0.001%  0 alarm events / 6.5 min
+ambient_dyno_drive_winter                      ambient 114148           0.001%  0 alarm events / 0.8 min
+ambient_dyno_reverse                           ambient 123047           0.001%  0 alarm events / 0.9 min
+ambient_dyno_drive_benign_anomaly              ambient 771519           0.039%  14 alarm events / 7.6 min
+ambient_highway_street_driving_diagnostics     ambient 1124751           0.045%  3 alarm events / 7.8 min
+correlated_signal_attack_2                     attack    2141  100.0%   0.000%  detect 27 ms; alarm frames outside attack 0
+correlated_signal_attack_2_masquerade          masq      2141  100.0%   0.000%  detect 27 ms; alarm frames outside attack 0
+correlated_signal_attack_3                     attack    1265  100.0%   0.000%  detect 29 ms; alarm frames outside attack 1
+correlated_signal_attack_3_masquerade          masq      1265  100.0%   0.000%  detect 29 ms; alarm frames outside attack 1
+fuzzing_attack_2                               attack     352  100.0%   0.009%  detect 4 ms; alarm frames outside attack 43
+fuzzing_attack_3                               attack     115  100.0%   0.008%  detect 5 ms; alarm frames outside attack 32
+max_engine_coolant_temp_attack                 attack      43  100.0%   0.044%  detect 292 ms; alarm frames outside attack 37
+max_engine_coolant_temp_attack_masquerade      masq        43    2.3%   0.042%  detect MISSED; alarm frames outside attack 36
+max_speedometer_attack_2                       attack    3141   99.5%   0.001%  detect 28 ms; alarm frames outside attack 1
+max_speedometer_attack_2_masquerade            masq      3141  100.0%   0.001%  detect 28 ms; alarm frames outside attack 4
+max_speedometer_attack_3                       attack    6108  100.0%   0.008%  detect 32 ms; alarm frames outside attack 1
+max_speedometer_attack_3_masquerade            masq      6108  100.0%   0.008%  detect 32 ms; alarm frames outside attack 4
+reverse_light_off_attack_2                     attack    2372   98.4%   0.007%  detect 46 ms; alarm frames outside attack 1
+reverse_light_off_attack_2_masquerade          masq      2372    0.0%   0.000%  detect MISSED; alarm frames outside attack 0
+reverse_light_off_attack_3                     attack    2435   78.9%   0.001%  detect 146 ms; alarm frames outside attack 1
+reverse_light_off_attack_3_masquerade          masq      2435    0.0%   0.001%  detect MISSED; alarm frames outside attack 0
+reverse_light_on_attack_2                      attack    3690   98.1%   0.001%  detect 31 ms; alarm frames outside attack 1
+reverse_light_on_attack_2_masquerade           masq      3690    0.0%   0.001%  detect MISSED; alarm frames outside attack 0
+reverse_light_on_attack_3                      attack    2352   99.4%   0.001%  detect 30 ms; alarm frames outside attack 1
+reverse_light_on_attack_3_masquerade           masq      2352    0.0%   0.001%  detect MISSED; alarm frames outside attack 0
+
+frame-level: attack recall 75.7%  |  benign FPR on held-out ambient 0.021% (863 of 4129941)
+balanced recall (mean over attack captures): 73.8%
+event-level: 18 false alarm events in 31.0 min of held-out benign driving = 34.8/hour
