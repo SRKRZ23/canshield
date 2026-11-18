@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!-- QNX System Launch and Monitor (slm) configuration for CANSHIELD.
+     Start: slm -v /data/home/root/canshield-slm.xml   (in a real image: part of the boot slm config) -->
+<SLM:system>
+  <SLM:component name="canshield">
+    <SLM:command>/data/home/root/cs_unit.sh</SLM:command>
+    <SLM:priority>40f</SLM:priority>
+    <SLM:stdout>/tmp/canshield-unit.log</SLM:stdout>
+    <SLM:stderr>/tmp/canshield-unit.log</SLM:stderr>
+    <SLM:waitfor wait="pathname">/dev/canshield</SLM:waitfor>
+    <SLM:repair backoff="1">restart</SLM:repair>
+  </SLM:component>
+</SLM:system>

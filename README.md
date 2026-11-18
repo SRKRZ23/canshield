@@ -77,8 +77,10 @@ not a higher score.
   (`ThreadCtl(_NTO_TCTL_IO)` must fail): `privileges dropped and locked (self-test: I/O privilege denied - OK)`.
 - **Fail-closed gateway:** with `canshieldd` killed (`kill -9`) for 11.5 s mid-attack, **0 frames** reached the protected
   bus and 0 injected frames leaked.
-- **Recovery:** restarting `canshieldd` alone can hang on `dev-can-linux` (a SIGKILLed blocked reader is not released);
-  restarting driver + daemon together recovers. A supervisor (QNX SLM) restarting them as a unit is the next step.
+- **Supervised recovery with QNX SLM:** `qnx/canshield-slm.xml` runs `qnx/cs_unit.sh` (restart the CAN driver, `waitfor`
+  its devices, `exec canshieldd`) with `<SLM:repair>restart</SLM:repair>`. Verified: `kill -9 canshieldd` → SLM logs
+  "terminated by uncaught signal 9", restarts driver + daemon (new PIDs), and traffic flows again (5/5 test frames forwarded).
+  The unit restarts the driver too because `dev-can-linux` may not release a reader that was killed while blocked.
 
 ## Live demo on QNX (no hardware)
 QNX 8.0 x86_64 runs in QEMU with an emulated **Advantech MIOe-3680 dual-channel SJA1000 CAN card**
