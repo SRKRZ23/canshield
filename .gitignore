@@ -9,3 +9,6 @@ build/*.npy
 build/*.npz
 build/*seed*
 __pycache__/
+build/bench/*.bin
+build/bench/*.o
+build/cs_bench

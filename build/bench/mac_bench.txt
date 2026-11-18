@@ -1,0 +1,4 @@
+frames loaded: 7987766
+throughput (best of 3, no per-frame timer): 23.2 ns/frame = 43.2 M frames/s
+per-frame (timer overhead ~15 ns included): p50 0  p99 1000  p99.9 1000  p99.99 1000  max 391000 ns
+input independence (2000000 frames each): real traffic 22.9 ns | random payloads 33.1 ns | unknown ids 14.9 ns

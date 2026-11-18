@@ -28,6 +28,7 @@
 #include <sys/neutrino.h>
 #include <sys/slog2.h>
 #include <sys/syspage.h>
+#include <sys/procmgr.h>
 #include "../core/cs_detector.h"
 #include "canshield_api.h"
 
@@ -56,16 +57,12 @@ static void notify_clients(void)
             g_notify[i].armed = 0;                       /* client went away */
 }
 
-typedef struct { const char *in, *out; int prio; } rx_args_t;
+typedef struct { const char *in, *out; int prio; int fin, fout; } rx_args_t;
 
 static void *rx_thread(void *arg)
 {
-    rx_args_t *a = arg;
-    struct sched_param sp = { .sched_priority = a->prio };
-    pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
-    int fin = open(a->in, O_RDWR), fout = a->out ? open(a->out, O_RDWR) : -1;
-    if (fin < 0) { slog2f(g_log, 0, SLOG2_ERROR, "canshieldd: open %s: %s", a->in, strerror(errno)); fprintf(stderr, "open %s: %s\n", a->in, strerror(errno)); exit(1); }
-    if (a->out && fout < 0) { fprintf(stderr, "open %s: %s\n", a->out, strerror(errno)); exit(1); }
+    rx_args_t *a = arg;                              /* devices were opened and priority set before privileges were dropped */
+    int fin = a->fin, fout = a->fout;
     struct can_msg m; cs_frame_t f; cs_verdict_t v;
     for (;;) {
         memset(&m, 0, sizeof m);
@@ -171,7 +168,7 @@ static int io_devctl(resmgr_context_t *ctp, io_devctl_t *msg, RESMGR_OCB_T *vocb
 
 int main(int argc, char **argv)
 {
-    const char *prof = NULL; rx_args_t a = { "/dev/can0/rx0", NULL, 40 }; int opt;
+    const char *prof = NULL; rx_args_t a = { "/dev/can0/rx0", NULL, 40, -1, -1 }; int opt;
     while ((opt = getopt(argc, argv, "p:i:o:P:s:v")) != -1) {
         if (opt == 'p') prof = optarg; else if (opt == 'i') a.in = optarg; else if (opt == 'o') a.out = optarg;
         else if (opt == 'P') a.prio = atoi(optarg); else if (opt == 'v') g_verbose = 1;
@@ -195,7 +192,22 @@ int main(int argc, char **argv)
     resmgr_attr_t rattr; memset(&rattr, 0, sizeof rattr); rattr.nparts_max = 1; rattr.msg_max_size = 4096;
     if (resmgr_attach(dpp, &rattr, CS_PATH, _FTYPE_ANY, 0, &cfuncs, &iofuncs, &attr) == -1) { perror("resmgr_attach"); return 1; }
 
-    pthread_t th; pthread_create(&th, NULL, rx_thread, &a);
+    /* open devices and fix the RX thread's real-time priority BEFORE dropping privileges */
+    a.fin = open(a.in, O_RDWR); a.fout = a.out ? open(a.out, O_RDWR) : -1;
+    if (a.fin < 0) { fprintf(stderr, "open %s: %s\n", a.in, strerror(errno)); return 1; }
+    if (a.out && a.fout < 0) { fprintf(stderr, "open %s: %s\n", a.out, strerror(errno)); return 1; }
+    pthread_attr_t ta; pthread_attr_init(&ta);
+    pthread_attr_setinheritsched(&ta, PTHREAD_EXPLICIT_SCHED); pthread_attr_setschedpolicy(&ta, SCHED_FIFO);
+    struct sched_param sp = { .sched_priority = a.prio }; pthread_attr_setschedparam(&ta, &sp);
+    pthread_t th;
+    if (pthread_create(&th, &ta, rx_thread, &a) != EOK) { perror("pthread_create"); return 1; }
+
+    /* least privilege: deny + lock every QNX process-manager ability for root and non-root */
+    int drop = procmgr_ability(0, PROCMGR_ADN_ROOT | PROCMGR_ADN_NONROOT | PROCMGR_AOP_DENY | PROCMGR_AOP_LOCK | PROCMGR_AID_EOL);
+    int io_denied = (ThreadCtl(_NTO_TCTL_IO, 0) == -1);             /* self-test: hardware I/O privilege must be refused */
+    printf("canshieldd: privileges %s (self-test: I/O privilege %s)\n", drop == EOK ? "dropped and locked" : "DROP FAILED",
+           io_denied ? "denied - OK" : "STILL GRANTED");
+    if (g_log) slog2f(g_log, 0, SLOG2_INFO, "canshieldd: abilities dropped=%d io_denied=%d", drop == EOK, io_denied);
     printf("canshieldd: %u known ids, input %s%s%s, rx priority %d, time dilation 1/%llu, %s ready (cycles/s %llu)\n",
            g_prof.n_known, a.in, a.out ? ", forwarding clean frames to " : "", a.out ? a.out : "", a.prio, (unsigned long long)g_slow, CS_PATH,
            (unsigned long long)g_cps);

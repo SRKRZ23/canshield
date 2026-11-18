@@ -1,0 +1,10 @@
+QNX canshield 8.0.0 2026/10/30-09:10:05EDT x86pc x86_64
+### A: idle, detector prio 10
+throughput (best of 3, no per-frame timer): 404.2 ns/frame = 2.5 M frames/s
+per-frame (timer overhead ~105 ns included): p50 542  p99 791  p99.9 1126  p99.99 30941  max 262542 ns
+### B: 2 CPU hogs @10, detector prio 10
+throughput (best of 3, no per-frame timer): 608.7 ns/frame = 1.6 M frames/s
+per-frame (timer overhead ~165 ns included): p50 542  p99 792  p99.9 5170  p99.99 2060055  max 3095421 ns
+### C: 2 CPU hogs @10, detector prio 63 FIFO
+throughput (best of 3, no per-frame timer): 405.3 ns/frame = 2.5 M frames/s
+per-frame (timer overhead ~108 ns included): p50 542  p99 792  p99.9 1376  p99.99 33652  max 82524 ns
