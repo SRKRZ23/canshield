@@ -12,3 +12,6 @@ __pycache__/
 build/bench/*.bin
 build/bench/*.o
 build/cs_bench
+demo/live.json
+demo/live.json.tmp
+demo/mode.txt

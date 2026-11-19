@@ -10,7 +10,13 @@
  *        devctl(CS_DEVCTL_NOTIFY, sigevent)     -> client is notified (MsgDeliverEvent) on every alarm
  *  - Alarms are logged to slog2.
  *
- * usage: canshieldd -p profile.bin [-i /dev/can0/rx0] [-o /dev/can1/tx0] [-P priority] [-s slow] [-v]
+ *  - Optional tap (-t FIFO): every accepted frame is also written, non-blocking, as a raw struct can_msg
+ *    to a FIFO, so a local consumer (e.g. the Kuksa CAN feeder) only ever sees frames that passed the firewall.
+ *
+ *  - Modes: enforce (default, firewall) or monitor (-n; detect and alarm, forward everything). Switch at run
+ *    time with  echo monitor > /dev/canshield  /  echo enforce > /dev/canshield.
+ *
+ * usage: canshieldd -p profile.bin [-i /dev/can0/rx0] [-o /dev/can1/tx0] [-t /tmp/cs_accepted] [-n] [-P priority] [-s slow] [-v]
  *   -s N: time dilation when the input is replayed N times slower (emulator demos); detection logic unchanged
  * SPDX-License-Identifier: Apache-2.0 */
 #include <errno.h>
@@ -29,6 +35,7 @@
 #include <sys/slog2.h>
 #include <sys/syspage.h>
 #include <sys/procmgr.h>
+#include <sys/stat.h>
 #include "../core/cs_detector.h"
 #include "canshield_api.h"
 
@@ -57,12 +64,15 @@ static void notify_clients(void)
             g_notify[i].armed = 0;                       /* client went away */
 }
 
-typedef struct { const char *in, *out; int prio; int fin, fout; } rx_args_t;
+typedef struct { const char *in, *out, *tap; int prio; int fin, fout, ftap; } rx_args_t;
+static uint64_t       g_tap_sent, g_tap_dropped;   /* accepted-frame tap (FIFO) for local consumers, e.g. a Kuksa feeder */
+static volatile int   g_enforce = 1;               /* 1 = firewall (drop flagged frames), 0 = monitor (detect only);
+                                                      switch at run time: echo monitor|enforce > /dev/canshield */
 
 static void *rx_thread(void *arg)
 {
     rx_args_t *a = arg;                              /* devices were opened and priority set before privileges were dropped */
-    int fin = a->fin, fout = a->fout;
+    int fin = a->fin, fout = a->fout, ftap = a->ftap;
     struct can_msg m; cs_frame_t f; cs_verdict_t v;
     for (;;) {
         memset(&m, 0, sizeof m);
@@ -75,9 +85,11 @@ static void *rx_thread(void *arg)
         f.t_us = c0 * 1000000ull / g_cps / g_slow;
         cs_detect(&g_prof, &g_det, &f, &v);
         uint64_t c1 = ClockCycles();
-        int drop = v.flagged || v.id_alarm || v.bus_alarm;
+        int drop = (v.flagged || v.id_alarm || v.bus_alarm) && g_enforce;   /* monitor mode: detect + alarm only */
         if (fout >= 0 && !drop) devctl(fout, CAN_DEVCTL_TX_FRAME_RAW, &m, sizeof m, NULL);
         uint64_t c2 = ClockCycles();
+        /* tap: non-blocking, atomic (88 B < PIPE_BUF) write of each accepted frame; a slow reader never stalls RX */
+        if (ftap >= 0 && !drop) { if (write(ftap, &m, sizeof m) == (ssize_t)sizeof m) g_tap_sent++; else g_tap_dropped++; }
         uint64_t det_ns = (c1 - c0) * 1000000000ull / g_cps, gw_ns = (c2 - c0) * 1000000000ull / g_cps;
 
         pthread_mutex_lock(&g_mx);
@@ -128,7 +140,27 @@ static int render(char *buf, size_t n)
     static const char *lbl[CS_HIST_BUCKETS] = { "<250ns", "<500ns", "<1us", "<2us", "<5us", "<10us", "<20us", "<50us", "<100us", ">=100us" };
     for (int b = 0; b < CS_HIST_BUCKETS && k < (int)n; b++)
         k += snprintf(buf + k, n - k, "  %-8s %10llu %10llu\n", lbl[b], (unsigned long long)s.det_hist[b], (unsigned long long)s.gw_hist[b]);
+    if (k < (int)n)
+        k += snprintf(buf + k, n - k, "tap: %llu accepted frames delivered, %llu skipped (reader slow or absent)\n"
+                      "mode: %s\n", (unsigned long long)g_tap_sent, (unsigned long long)g_tap_dropped,
+                      g_enforce ? "enforce (firewall)" : "monitor (detect only)");
     return k;
+}
+
+/* write "monitor" or "enforce" to switch modes at run time (no restart: the RX thread keeps its device) */
+static int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *vocb)
+{
+    iofunc_ocb_t *ocb = vocb;
+    int st = iofunc_write_verify(ctp, msg, ocb, NULL); if (st != EOK) return st;
+    if ((msg->i.xtype & _IO_XTYPE_MASK) != _IO_XTYPE_NONE) return ENOSYS;
+    size_t n = _IO_WRITE_GET_NBYTES(msg); char b[16] = {0};
+    resmgr_msgread(ctp, b, n < sizeof b - 1 ? n : sizeof b - 1, sizeof msg->i);
+    if (!strncmp(b, "monitor", 7)) g_enforce = 0;
+    else if (!strncmp(b, "enforce", 7)) g_enforce = 1;
+    else return EINVAL;
+    if (g_log) slog2f(g_log, 0, SLOG2_INFO, "canshieldd: mode -> %s", g_enforce ? "enforce" : "monitor");
+    _IO_SET_WRITE_NBYTES(ctp, n);
+    return EOK;
 }
 
 static int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *vocb)
@@ -168,9 +200,10 @@ static int io_devctl(resmgr_context_t *ctp, io_devctl_t *msg, RESMGR_OCB_T *vocb
 
 int main(int argc, char **argv)
 {
-    const char *prof = NULL; rx_args_t a = { "/dev/can0/rx0", NULL, 40, -1, -1 }; int opt;
-    while ((opt = getopt(argc, argv, "p:i:o:P:s:v")) != -1) {
+    const char *prof = NULL; rx_args_t a = { "/dev/can0/rx0", NULL, NULL, 40, -1, -1, -1 }; int opt;
+    while ((opt = getopt(argc, argv, "p:i:o:t:P:s:nv")) != -1) {
         if (opt == 'p') prof = optarg; else if (opt == 'i') a.in = optarg; else if (opt == 'o') a.out = optarg;
+        else if (opt == 't') a.tap = optarg; else if (opt == 'n') g_enforce = 0;
         else if (opt == 'P') a.prio = atoi(optarg); else if (opt == 'v') g_verbose = 1;
         else if (opt == 's') g_slow = (uint64_t)atoi(optarg) > 0 ? (uint64_t)atoi(optarg) : 1;
     }
@@ -187,8 +220,8 @@ int main(int argc, char **argv)
 
     dispatch_t *dpp = dispatch_create();
     iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &cfuncs, _RESMGR_IO_NFUNCS, &iofuncs);
-    iofuncs.read = io_read; iofuncs.devctl = io_devctl;
-    iofunc_attr_init(&attr, S_IFCHR | 0444, NULL, NULL);
+    iofuncs.read = io_read; iofuncs.devctl = io_devctl; iofuncs.write = io_write;
+    iofunc_attr_init(&attr, S_IFCHR | 0644, NULL, NULL);    /* only root may switch the mode */
     resmgr_attr_t rattr; memset(&rattr, 0, sizeof rattr); rattr.nparts_max = 1; rattr.msg_max_size = 4096;
     if (resmgr_attach(dpp, &rattr, CS_PATH, _FTYPE_ANY, 0, &cfuncs, &iofuncs, &attr) == -1) { perror("resmgr_attach"); return 1; }
 
@@ -196,6 +229,11 @@ int main(int argc, char **argv)
     a.fin = open(a.in, O_RDWR); a.fout = a.out ? open(a.out, O_RDWR) : -1;
     if (a.fin < 0) { fprintf(stderr, "open %s: %s\n", a.in, strerror(errno)); return 1; }
     if (a.out && a.fout < 0) { fprintf(stderr, "open %s: %s\n", a.out, strerror(errno)); return 1; }
+    if (a.tap) {   /* O_RDWR keeps the FIFO open without a reader (no SIGPIPE); O_NONBLOCK: full pipe -> skip, never wait */
+        if (mkfifo(a.tap, 0644) == -1 && errno != EEXIST) { fprintf(stderr, "mkfifo %s: %s\n", a.tap, strerror(errno)); return 1; }
+        a.ftap = open(a.tap, O_RDWR | O_NONBLOCK);
+        if (a.ftap < 0) { fprintf(stderr, "open %s: %s\n", a.tap, strerror(errno)); return 1; }
+    }
     pthread_attr_t ta; pthread_attr_init(&ta);
     pthread_attr_setinheritsched(&ta, PTHREAD_EXPLICIT_SCHED); pthread_attr_setschedpolicy(&ta, SCHED_FIFO);
     struct sched_param sp = { .sched_priority = a.prio }; pthread_attr_setschedparam(&ta, &sp);

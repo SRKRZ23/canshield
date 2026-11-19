@@ -14,6 +14,12 @@ execution time can be measured and bounded — the property safety engineers nee
   `devctl(CS_DEVCTL_GET_STATS)` returns binary stats; `devctl(CS_DEVCTL_NOTIFY)` registers a
   `sigevent` and the client gets a **pulse** on every alarm (`cs_watch`, `MsgRegisterEvent`/`MsgDeliverEvent`).
 - Alarms are logged to **slog2**.
+- **Two modes, switched at run time without a restart:** `echo monitor > /dev/canshield` (detect and alarm,
+  forward everything) or `echo enforce > /dev/canshield` (CAN firewall, the default). Only root can write.
+- **Accepted-frame tap** (`-t /tmp/cs_accepted`): every frame CANSHIELD lets through is also written as a raw
+  `struct can_msg` to a FIFO, non-blocking (a slow or absent reader never stalls the RX thread; skipped
+  frames are counted). Local consumers read the bus *after* the firewall. The
+  [Kuksa CAN feeder](../kuksa-qnx) uses it, so spoofed frames never become VSS values that apps read.
 
 ## Data and honest evaluation
 Dataset: ROAD (Real ORNL Automotive Dynamometer CAN Intrusion Dataset), CC BY 4.0,
@@ -89,8 +95,35 @@ protected bus; both are bridged to Linux `vcan0`/`vcan1`, where ROAD captures ar
 Because x86 is emulated on ARM, replays run 20× slower and `canshieldd -s 20` divides its clock by 20
 (relative timing and detection logic unchanged; timing numbers inside the emulator are not hardware numbers).
 
-Speedometer masquerade (ROAD `max_speedometer_attack_2_masquerade`, 15.0–17.5 s):
-5983 frames in, 149 injected → **0 injected frames reached the protected bus**, 150 dropped, 5833 forwarded, 1 alarm event.
+### Attack demo: what applications actually read (CANSHIELD + Eclipse Kuksa, both on QNX)
+Chain: exposed bus `can0` → `canshieldd` → protected bus `can1`, and via the tap → `qnx-can-feeder` →
+**Kuksa Databroker on QNX** → `Vehicle.Speed` read over gRPC from Linux (as an app would).
+Attack: ROAD `max_speedometer_attack_2_masquerade`, 15.0–17.5 s (5983 frames, 150 spoofed `0x0D0` frames
+with speed byte `0xFF`; the true byte is `0x04`). Same capture, two modes switched at run time
+(`demo/run_scenario.sh`), each run twice (2026-11-19):
+
+| mode | frames classified | flagged | dropped | spoofed frames on protected bus | `Vehicle.Speed` in Kuksa | spoofed values delivered to apps |
+|---|---|---|---|---|---|---|
+| monitor (detection only), run 1 / 2 | 5984 / 5984 | 150 / 150 | 0 / 0 | 150 / 150 | **255** | 1 / 1 |
+| **enforce (firewall)**, run 1 / 2 | 5983 / 5984 | 150 / 150 | 150 / 150 | **0 / 0** | **4** (true value) | **0 / 0** |
+
+Detection alone raises the alarm but the app still reads the spoofed speed. In enforce mode, the spoofed
+value never reaches the vehicle-signal layer. (`Vehicle.Speed` is the raw ROAD byte; ROAD signals are not
+decoded to physical units.) Screenshots: `build/demo_shots/`.
+
+Run it: `vm/run-x86-can.sh start`; on QNX start `slm -v canshield-slm.xml`, `databroker`, and
+`qnx-can-feeder -f /tmp/cs_accepted`; then `python3 -m http.server` in `demo/` (dashboard) and in the VM
+`bash demo/run_scenario.sh monitor|enforce`.
+
+### Known limits of the emulated setup
+- Timing inside QEMU TCG is not a hardware number.
+- `dev-can-linux` (third-party, GPL-2.0) under TCG has two failure modes we hit:
+  (1) killing a process blocked in a CAN read stalls the driver;
+  (2) in long sessions, reception on `can0` stopped after roughly 12k–18k frames.
+  In both cases restarting the SLM unit (driver + daemon together) restored it, so the demo restarts the
+  unit before each run. A second emulated card (Kvaser on the protected bus) shared IRQ 10 with the
+  MIOe-3680 and lost frames, so it is not used.
+- The tap is local IPC (FIFO). In a vehicle, the protected-bus consumers would be other ECUs.
 
 ## Layout
 `core/` C feature extractor + detector (shared by Mac and QNX) · `tools/` profile builder, featurizer,

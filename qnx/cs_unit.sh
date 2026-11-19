@@ -6,4 +6,4 @@ cd /data/home/root
 slay -9 -f dev-can-linux >/dev/null 2>&1
 ./dev-can-linux -q </dev/null >/tmp/dcl.log 2>&1 &
 waitfor /dev/can1/tx0 10 || exit 1
-exec ./canshieldd -p profile.bin -i /dev/can0/rx0 -o /dev/can1/tx0 -s ${CS_SLOW:-20}
+exec ./canshieldd -p profile.bin -i /dev/can0/rx0 -o /dev/can1/tx0 -t /tmp/cs_accepted -s ${CS_SLOW:-20}

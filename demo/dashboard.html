@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CANSHIELD on QNX</title>
+<style>
+  :root { --bg:#0e1116; --panel:#151a22; --line:#232b36; --text:#d9dee7; --muted:#7d8796; --ok:#3fb68b; --bad:#e5534b; --warn:#d29922; --accent:#6aa6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+  header { display:flex; align-items:baseline; gap:16px; padding:18px 28px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:20px; font-weight:600; letter-spacing:.2px; }
+  header .sub { color:var(--muted); }
+  header .clock { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }
+  main { display:grid; grid-template-columns: 1fr 1.15fr 1fr; gap:18px; padding:22px 28px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; min-height:520px; }
+  h2 { margin:0 0 2px; font-size:13px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); font-weight:600; }
+  .big { font-size:34px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  .row:last-child { border-bottom:none; }
+  .lbl { color:var(--muted); }
+  .feed { margin-top:14px; font:12px/1.6 "SF Mono", Menlo, Consolas, monospace; }
+  .feed div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#9aa4b2; }
+  .feed .a { color:var(--bad); }
+  .status { margin:10px 0 14px; padding:14px; border-radius:8px; text-align:center; font-weight:600; font-size:22px; letter-spacing:.5px; transition:background .2s; }
+  .status.ok { background:rgba(63,182,139,.12); color:var(--ok); border:1px solid rgba(63,182,139,.35); }
+  .status.alarm { background:rgba(229,83,75,.16); color:var(--bad); border:1px solid rgba(229,83,75,.5); }
+  .status.idle { background:#1b212b; color:var(--muted); border:1px solid var(--line); }
+  .hist { display:grid; grid-template-columns: 70px 1fr 70px; gap:4px 8px; align-items:center; margin-top:12px; font-size:12px; font-variant-numeric:tabular-nums; }
+  .bar { height:10px; background:var(--accent); border-radius:2px; min-width:1px; }
+  .leak { margin-top:12px; padding:12px; border-radius:8px; text-align:center; font-weight:600; }
+  .leak.zero { background:rgba(63,182,139,.12); color:var(--ok); }
+  .leak.some { background:rgba(229,83,75,.16); color:var(--bad); }
+  .arrow { color:var(--muted); font-size:12px; margin:2px 0 10px; }
+  footer { padding:0 28px 18px; color:var(--muted); font-size:12px; }
+  .mode { margin-top:8px; font-size:12px; letter-spacing:.8px; text-transform:uppercase; color:var(--muted); }
+  .mode b { color:var(--text); }
+  .kuksa { margin-top:14px; padding:12px 14px; border:1px solid var(--line); border-radius:8px; }
+  .krow { display:flex; justify-content:space-between; align-items:baseline; margin:4px 0; }
+  .kval { font-size:28px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .kval.bad { color:var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>CANSHIELD</h1>
+  <span class="sub">deterministic CAN intrusion detection and CAN firewall &middot; QNX 8.0</span>
+  <span class="clock" id="clock">—</span>
+</header>
+<main>
+  <section>
+    <h2>Exposed bus &middot; can0</h2>
+    <div class="arrow">ROAD capture replayed onto the vehicle bus</div>
+    <div class="big" id="ex_frames">0</div><div class="lbl">frames on the bus</div>
+    <div class="row" style="margin-top:12px"><span class="lbl">injected attack frames seen</span><span id="ex_attack">0</span></div>
+    <div class="feed" id="ex_feed"></div>
+  </section>
+  <section>
+    <h2>CANSHIELD &middot; QNX resource manager /dev/canshield</h2>
+    <div class="mode" id="mode">mode: —</div>
+    <div class="status idle" id="status">WAITING FOR TRAFFIC</div>
+    <div class="row"><span class="lbl">frames classified</span><span id="q_frames">0</span></div>
+    <div class="row"><span class="lbl">frames flagged</span><span id="q_flagged">0</span></div>
+    <div class="row"><span class="lbl">alarm events</span><span id="q_events">0</span></div>
+    <div class="row"><span class="lbl">frames dropped (firewall)</span><span id="q_dropped">0</span></div>
+    <div class="row"><span class="lbl">frames forwarded</span><span id="q_fwd">0</span></div>
+    <div class="row"><span class="lbl">last alarm id</span><span id="q_last">—</span></div>
+    <div class="row"><span class="lbl">detection time mean / max</span><span id="q_lat">—</span></div>
+    <div class="lbl" style="margin-top:12px">detection-time histogram (ClockCycles)</div>
+    <div class="hist" id="hist"></div>
+  </section>
+  <section>
+    <h2>Protected bus &middot; can1</h2>
+    <div class="arrow">frames CANSHIELD let through</div>
+    <div class="big" id="pr_frames">0</div><div class="lbl">frames forwarded</div>
+    <div class="leak zero" id="leak">attack frames leaked: 0</div>
+    <div class="kuksa">
+      <div class="lbl">Eclipse Kuksa on QNX &middot; what apps read</div>
+      <div class="krow"><span>Vehicle.Speed</span><span class="kval" id="k_speed">—</span></div>
+      <div class="lbl" id="k_note">spoofed values delivered to apps: 0</div>
+    </div>
+    <div class="feed" id="pr_feed"></div>
+  </section>
+</main>
+<footer id="foot">Model: hardened logic-gate network (84 live gates, no data-dependent branches). Data: ROAD dataset (ORNL, CC BY 4.0).
+  Emulator run: replay slowed 20&times; with matching clock dilation; timing inside the emulator is not a hardware number.</footer>
+<script>
+const LBL = ["<250ns","<500ns","<1µs","<2µs","<5µs","<10µs","<20µs","<50µs","<100µs","≥100µs"];
+const fmt = n => (n ?? 0).toLocaleString("en-US");
+const ns = v => v == null ? "—" : v >= 1e6 ? (v/1e6).toFixed(2)+" ms" : v >= 1e3 ? (v/1e3).toFixed(1)+" µs" : v+" ns";
+let lastEvents = 0, alarmUntil = 0;
+function feed(el, items) {
+  el.innerHTML = (items || []).slice().reverse().map(f =>
+    `<div class="${f.a ? "a" : ""}">${f.id.padStart(3," ")}#${f.data}${f.a ? "  ← injected" : ""}</div>`).join("");
+}
+async function tick() {
+  try {
+    const d = await (await fetch("live.json?" + Date.now(), {cache: "no-store"})).json();
+    const q = d.qnx || {}, ex = d.exposed || {}, pr = d.protected || {};
+    document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+    document.getElementById("ex_frames").textContent = fmt(ex.frames);
+    document.getElementById("ex_attack").textContent = fmt(ex.attack_like);
+    document.getElementById("pr_frames").textContent = fmt(pr.frames);
+    const leak = document.getElementById("leak");
+    leak.textContent = "attack frames leaked: " + fmt(pr.attack_like);
+    leak.className = "leak " + (pr.attack_like ? "some" : "zero");
+    feed(document.getElementById("ex_feed"), ex.recent); feed(document.getElementById("pr_feed"), pr.recent);
+    const k = d.kuksa || {}, ks = document.getElementById("k_speed");
+    ks.textContent = k.speed == null ? "—" : k.speed.toFixed(0) + " (raw)";
+    ks.className = "kval" + (k.speed === 255 ? " bad" : "");
+    document.getElementById("k_note").textContent = "spoofed values delivered to apps: " + fmt(k.spoofed_seen);
+    ["frames","flagged","dropped"].forEach(k => document.getElementById("q_" + k).textContent = fmt(q[k]));
+    document.getElementById("q_events").textContent = fmt(q.alarm_events);
+    document.getElementById("q_fwd").textContent = fmt(q.forwarded);
+    document.getElementById("q_last").textContent = q.last_alarm_id ? "0x" + q.last_alarm_id.toString(16).toUpperCase().padStart(3,"0") : "—";
+    document.getElementById("q_lat").textContent = q.frames ? ns(q.det_mean_ns) + " / " + ns(q.det_max_ns) : "—";
+    if ((q.alarm_events || 0) > lastEvents) alarmUntil = Date.now() + 2500;
+    lastEvents = q.alarm_events || 0;
+    const enforce = d.mode !== "monitor";
+    document.getElementById("mode").innerHTML = "mode: <b>" + (enforce ? "enforce &middot; CAN firewall" : "monitor &middot; detection only") + "</b>";
+    const st = document.getElementById("status");
+    if (!q.frames) { st.className = "status idle"; st.textContent = "WAITING FOR TRAFFIC"; }
+    else if (Date.now() < alarmUntil) { st.className = "status alarm"; st.textContent = enforce ? "ATTACK DETECTED · BLOCKING" : "ATTACK DETECTED · NOT BLOCKED"; }
+    else { st.className = "status ok"; st.textContent = "BUS NORMAL"; }
+    const h = q.det_hist || [], mx = Math.max(1, ...h);
+    document.getElementById("hist").innerHTML = h.map((v, i) =>
+      `<span class="lbl">${LBL[i]}</span><div class="bar" style="width:${(100*v/mx).toFixed(1)}%"></div><span>${fmt(v)}</span>`).join("");
+  } catch (e) { /* relay not running yet */ }
+}
+setInterval(tick, 250); tick();
+</script>
+</body>
+</html>
