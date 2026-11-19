@@ -5,6 +5,7 @@ usage: python3 relay.py <ssh-key> [--out DIR]"""
 import argparse, json, os, socket, struct, subprocess, threading, time
 
 ap = argparse.ArgumentParser(); ap.add_argument('key'); ap.add_argument('--out', default=os.path.dirname(os.path.abspath(__file__)))
+ap.add_argument('--rec', help='also append every snapshot (JSON lines) to this file, e.g. for rendering a video')
 A = ap.parse_args()
 OUT = os.path.join(A.out, 'live.json')
 state = {'qnx': {}, 'exposed': {'frames': 0, 'attack_like': 0, 'recent': []}, 'protected': {'frames': 0, 'attack_like': 0, 'recent': []}}
@@ -38,7 +39,8 @@ def qnx_stream():
         time.sleep(1)
 
 state['kuksa'] = {'speed': None, 'updates': 0, 'spoofed_seen': 0}
-KUKSA_TEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'kuksa-qnx', 'test')
+# folder with watch_speed.py from github.com/SRKRZ23/kuksa-qnx (test/); override with KUKSA_TEST
+KUKSA_TEST = os.environ.get('KUKSA_TEST', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'kuksa-qnx', 'test'))
 
 def kuksa_stream():
     # what applications see: Vehicle.Speed from the Kuksa databroker running on QNX (via the ssh tunnel)
@@ -68,4 +70,6 @@ while True:
         mode = 'enforce'
     with lock: snap = json.dumps(dict(state, ts=time.time(), mode=mode))
     tmp = OUT + '.tmp'; open(tmp, 'w').write(snap); os.replace(tmp, OUT)
+    if A.rec:
+        with open(A.rec, 'a') as f: f.write(snap + '\n')
     time.sleep(0.2)

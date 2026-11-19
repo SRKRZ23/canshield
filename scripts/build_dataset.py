@@ -9,7 +9,8 @@ accelerator_* captures are excluded: they are firmware modifications with no inj
 """
 import json, os, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ROAD = os.path.expanduser('~/Alish/qnx-hackathon-2026/data/road/road')
+# ROAD root (the folder that contains ambient/ and attacks/). Download: Zenodo record 10462796.
+ROAD = os.path.expanduser(os.environ.get('ROAD_DIR', os.path.join(ROOT, 'data', 'road')))
 OUT = os.path.join(ROOT, 'build', 'data')
 os.makedirs(OUT, exist_ok=True)
 

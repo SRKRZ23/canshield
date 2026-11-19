@@ -36,7 +36,7 @@ def main():
     ap.add_argument('--split', default='test'); ap.add_argument('--thr', type=int, default=None); A = ap.parse_args()
     meta = json.load(open(os.path.join(ROOT, 'build', 'model_meta.json'))); thr = A.thr if A.thr is not None else meta['threshold']
     V = votes_lookup()
-    road_meta = json.load(open(os.path.expanduser('~/Alish/qnx-hackathon-2026/data/road/road/attacks/capture_metadata.json')))
+    road_meta = json.load(open(os.path.join(os.path.expanduser(os.environ.get('ROAD_DIR', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'road'))), 'attacks', 'capture_metadata.json')))
     rows, ben_frames, ben_fp, ben_hours, ben_alarms = [], 0, 0, 0.0, 0
     tot_pos = tot_tp = 0; per_cap = []
     for e in manifest():

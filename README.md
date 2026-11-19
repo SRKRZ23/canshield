@@ -19,7 +19,7 @@ execution time can be measured and bounded — the property safety engineers nee
 - **Accepted-frame tap** (`-t /tmp/cs_accepted`): every frame CANSHIELD lets through is also written as a raw
   `struct can_msg` to a FIFO, non-blocking (a slow or absent reader never stalls the RX thread; skipped
   frames are counted). Local consumers read the bus *after* the firewall. The
-  [Kuksa CAN feeder](../kuksa-qnx) uses it, so spoofed frames never become VSS values that apps read.
+  [Kuksa CAN feeder](https://github.com/SRKRZ23/kuksa-qnx) uses it, so spoofed frames never become VSS values that apps read.
 
 ## Data and honest evaluation
 Dataset: ROAD (Real ORNL Automotive Dynamometer CAN Intrusion Dataset), CC BY 4.0,
@@ -125,8 +125,51 @@ Run it: `vm/run-x86-can.sh start`; on QNX start `slm -v canshield-slm.xml`, `dat
   MIOe-3680 and lost frames, so it is not used.
 - The tap is local IPC (FIFO). In a vehicle, the protected-bus consumers would be other ECUs.
 
+## Build and run
+Tested with **QNX SDP 8.0** (QNX Everywhere, non-commercial licence), target **x86_64** (`qcc -Vgcc_ntox86_64`),
+in a QEMU guest made with `mkqnximage`. The SDP host tools need x86_64 Linux; on a Mac they run in an amd64
+container (`docs/CODELAB.md` shows the whole setup). Host side: any C compiler; Python 3.10+ with numpy and
+PyTorch for training.
+
+**1. Data (not redistributed).** Download ROAD from Zenodo record 10462796 and point `ROAD_DIR` at the folder
+that contains `ambient/` and `attacks/`.
+
+**2. Profile, training, evaluation (Mac or Linux):**
+```bash
+export ROAD_DIR=/path/to/road
+python3 scripts/build_dataset.py                          # builds tools, normal-behaviour profile, features
+python3 scripts/train_lgn.py --seed 0 --target_fpr 0.001  # trains, hardens, exports build/cs_model.c
+python3 scripts/evaluate.py --split test --k 4 --n 8      # held-out results (build/TEST_RESULTS_2026-11-18.txt)
+cc -O2 -Wall -o build/cs_replay tools/cs_replay.c core/canshield.c core/cs_detector.c build/cs_model.c
+./build/cs_replay build/profile.bin build/parity.bin      # C runtime == Python model
+```
+The committed `build/cs_model.c` is the model evaluated above (`build/model_meta.json`).
+
+**3. QNX binaries:**
+```bash
+source ~/qnx800/qnxsdp-env.sh
+qcc -Vgcc_ntox86_64 -O2 -Wall -Wextra -o canshieldd qnx/canshieldd.c core/canshield.c core/cs_detector.c build/cs_model.c -lslog2
+qcc -Vgcc_ntox86_64 -O2 -Wall -o cs_watch qnx/cs_watch.c
+qcc -Vgcc_ntox86_64 -O2 -Wall -o cs_stat  qnx/cs_stat.c
+```
+
+**4. On QNX** (with `canshieldd`, `profile.bin`, `qnx/cs_unit.sh`, `qnx/canshield-slm.xml` and the
+`dev-can-linux` driver in `/data/home/root`):
+```sh
+slm -v /data/home/root/canshield-slm.xml        # supervised: CAN driver + canshieldd as one unit
+cat /dev/canshield                              # status and detection-time histogram
+echo monitor > /dev/canshield                   # detection only; "enforce" = CAN firewall (default)
+./cs_watch                                      # pulse on every alarm
+```
+Or run it directly: `canshieldd -p profile.bin -i /dev/can0/rx0 -o /dev/can1/tx0 -t /tmp/cs_accepted`.
+
+**5. Emulated CAN bus and demo:** `emulator/run-x86-can.sh start` (QEMU with a dual-channel SJA1000 card
+bridged to Linux `vcan0`/`vcan1`; QNX image in `emulator/x86/`), `emulator/canreplay.py` replays ROAD
+captures, `demo/run_scenario.sh monitor|enforce` runs the attack demo (`ROAD_DIR`, `QNX_KEY` set the paths).
+
 ## Layout
 `core/` C feature extractor + detector (shared by Mac and QNX) · `tools/` profile builder, featurizer,
-replay/parity · `scripts/` dataset, training (logic-gate network), evaluation · `qnx/` daemon, client, API.
+replay/parity, benchmark · `scripts/` dataset, training (logic-gate network), evaluation, baselines ·
+`qnx/` daemon, clients, API, SLM unit · `demo/` live dashboard · `emulator/` QEMU + CAN replay · `docs/` codelab.
 
 License: Apache-2.0.

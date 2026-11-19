@@ -15,3 +15,5 @@ build/cs_bench
 demo/live.json
 demo/live.json.tmp
 demo/mode.txt
+data/
+emulator/x86/

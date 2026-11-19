@@ -9,8 +9,11 @@
 set -u
 MODE=${1:?monitor|enforce}
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/../.." && pwd)
-CAP=$ROOT/data/road/road/attacks/max_speedometer_attack_2_masquerade.log
-qnx() { ssh -p 2222 -i "$ROOT/env/keys/qnxvm" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+REPO=$(cd "$HERE/.." && pwd)
+# paths can be overridden: ROAD_DIR (ROAD root), QNX_KEY (ssh key of the QNX guest)
+CAP=${ROAD_DIR:-$ROOT/data/road/road}/attacks/max_speedometer_attack_2_masquerade.log
+KEY=${QNX_KEY:-$ROOT/env/keys/qnxvm}
+qnx() { ssh -p 2222 -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o LogLevel=ERROR root@127.0.0.1 "$1" </dev/null; }
 P=$(pgrep -f "u rel[a]y"); [ -n "$P" ] && kill $P
 docker ps -q --filter ancestor=kuksa-pyclient | xargs -r docker kill >/dev/null
@@ -21,7 +24,10 @@ echo "$MODE" > "$HERE/mode.txt"
 sleep 1
 cansend vcan0 0D0#0000000000040000          # true speed byte (4) before the attack
 sleep 3
-cd "$HERE" && setsid nohup python3 -u relay.py "$ROOT/env/keys/qnxvm" </dev/null >/tmp/relay.log 2>&1 &
+cd "$HERE" && setsid nohup python3 -u relay.py "$KEY" ${REC:+--rec "$REC"} </dev/null >/tmp/relay.log 2>&1 &
 sleep 12
-sudo python3 "$ROOT/vm/canreplay.py" vcan0 "$CAP" --slow 20 --from 15.0 --to 17.5 | tail -1
+[ -n "${REC:-}" ] && echo "replay_start $(date +%s.%N) $MODE" >> "$REC.marks"
+sudo python3 "$REPO/emulator/canreplay.py" vcan0 "$CAP" --slow 20 --from 15.0 --to 17.5 | tail -1
 sleep 4
+[ -n "${REC:-}" ] && echo "replay_end $(date +%s.%N) $MODE" >> "$REC.marks"
+exit 0

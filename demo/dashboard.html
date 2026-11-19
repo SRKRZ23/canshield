@@ -88,16 +88,16 @@
 const LBL = ["<250ns","<500ns","<1µs","<2µs","<5µs","<10µs","<20µs","<50µs","<100µs","≥100µs"];
 const fmt = n => (n ?? 0).toLocaleString("en-US");
 const ns = v => v == null ? "—" : v >= 1e6 ? (v/1e6).toFixed(2)+" ms" : v >= 1e3 ? (v/1e3).toFixed(1)+" µs" : v+" ns";
-let lastEvents = 0, alarmUntil = 0;
+let lastFlagged = 0, alarmUntil = 0;
 function feed(el, items) {
   el.innerHTML = (items || []).slice().reverse().map(f =>
     `<div class="${f.a ? "a" : ""}">${f.id.padStart(3," ")}#${f.data}${f.a ? "  ← injected" : ""}</div>`).join("");
 }
-async function tick() {
-  try {
-    const d = await (await fetch("live.json?" + Date.now(), {cache: "no-store"})).json();
+function resetDash() { lastFlagged = 0; alarmUntil = 0; }
+// render one snapshot; `now` (ms) is wall time live, or the snapshot's own time when a recording is replayed
+function render(d, now) {
     const q = d.qnx || {}, ex = d.exposed || {}, pr = d.protected || {};
-    document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+    document.getElementById("clock").textContent = new Date(now).toLocaleTimeString("en-GB");
     document.getElementById("ex_frames").textContent = fmt(ex.frames);
     document.getElementById("ex_attack").textContent = fmt(ex.attack_like);
     document.getElementById("pr_frames").textContent = fmt(pr.frames);
@@ -114,20 +114,24 @@ async function tick() {
     document.getElementById("q_fwd").textContent = fmt(q.forwarded);
     document.getElementById("q_last").textContent = q.last_alarm_id ? "0x" + q.last_alarm_id.toString(16).toUpperCase().padStart(3,"0") : "—";
     document.getElementById("q_lat").textContent = q.frames ? ns(q.det_mean_ns) + " / " + ns(q.det_max_ns) : "—";
-    if ((q.alarm_events || 0) > lastEvents) alarmUntil = Date.now() + 2500;
-    lastEvents = q.alarm_events || 0;
+    if ((q.flagged || 0) > lastFlagged) alarmUntil = now + 3000;   // banner stays on while frames keep being flagged
+    lastFlagged = q.flagged || 0;
     const enforce = d.mode !== "monitor";
     document.getElementById("mode").innerHTML = "mode: <b>" + (enforce ? "enforce &middot; CAN firewall" : "monitor &middot; detection only") + "</b>";
     const st = document.getElementById("status");
     if (!q.frames) { st.className = "status idle"; st.textContent = "WAITING FOR TRAFFIC"; }
-    else if (Date.now() < alarmUntil) { st.className = "status alarm"; st.textContent = enforce ? "ATTACK DETECTED · BLOCKING" : "ATTACK DETECTED · NOT BLOCKED"; }
+    else if (now < alarmUntil) { st.className = "status alarm"; st.textContent = enforce ? "ATTACK DETECTED · BLOCKING" : "ATTACK DETECTED · NOT BLOCKED"; }
     else { st.className = "status ok"; st.textContent = "BUS NORMAL"; }
     const h = q.det_hist || [], mx = Math.max(1, ...h);
     document.getElementById("hist").innerHTML = h.map((v, i) =>
       `<span class="lbl">${LBL[i]}</span><div class="bar" style="width:${(100*v/mx).toFixed(1)}%"></div><span>${fmt(v)}</span>`).join("");
+}
+async function tick() {
+  try {
+    render(await (await fetch("live.json?" + Date.now(), {cache: "no-store"})).json(), Date.now());
   } catch (e) { /* relay not running yet */ }
 }
-setInterval(tick, 250); tick();
+if (!new URLSearchParams(location.search).has("replay")) { setInterval(tick, 250); tick(); }
 </script>
 </body>
 </html>
